@@ -1,11 +1,11 @@
 import os
 import time
 
-from de_la_guerra_counter import DeLaGuerraCounter
+from carrillo_counter import CarrilloCounter
 
 
-PREVIOUS_IMAGE_PATH = "images/de-la-guerra_previous.jpg"
-CURRENT_IMAGE_PATH = "images/de-la-guerra_current.jpg"
+PREVIOUS_IMAGE_PATH = "images/carrillo_previous.jpg"
+CURRENT_IMAGE_PATH = "images/carrillo_current.jpg"
 CLASSIFY_INTERVAL_SECONDS = 5
 
 
@@ -16,14 +16,14 @@ def _read_image_bytes(path):
 
 def main():
     os.makedirs("images", exist_ok=True)
-    counter = DeLaGuerraCounter()
+    counter = CarrilloCounter()
     counter.warmup()
 
     try:
         while True:
             if not os.path.exists(PREVIOUS_IMAGE_PATH) or not os.path.exists(CURRENT_IMAGE_PATH):
                 print(
-                    "Waiting for de-la-guerra images... "
+                    "Waiting for carrillo images... "
                     "(run update-images.py to fetch current/previous frames)"
                 )
                 time.sleep(CLASSIFY_INTERVAL_SECONDS)
@@ -34,11 +34,11 @@ def main():
 
             result = counter.process(previous_image_bytes, current_image_bytes)
             if result is None:
-                print("de-la-guerra decode error")
+                print("carrillo decode error")
             else:
                 print(
                     (
-                        f"de-la-guerra occupancy={result['occupancy']} "
+                        f"carrillo occupancy={result['occupancy']} "
                         f"(in:+{result['cycle_in']}, out:-{result['cycle_out']})"
                     )
                 )

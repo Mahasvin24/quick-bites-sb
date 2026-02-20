@@ -7,26 +7,38 @@ import numpy as np
 
 
 DEFAULT_CONFIG = {
-    # These are normalized coordinates (x/width, y/height).
-    # Tune this polygon once you verify where de-la-guerra's entrance/exit appears.
+    # Entrance zone polygon in normalized coordinates (x/width, y/height).
     "entrance_polygon_norm": [
         (0, 0.42),
         (0.63, 0.42),
         (0.46, 1),
         (0, 1),
     ],
-    "binary_threshold": 25,
-    "min_motion_area": 350,
-    "morph_kernel_size": 5,
-    # With lower snapshot rates, people can move far between frames.
-    # A larger association radius avoids dropping tracks before crossings are detected.
+    # Pixel delta threshold for motion mask; higher = less sensitive to small changes.
+    "binary_threshold": 52,
+    # Minimum contour area to keep as a motion candidate; higher = fewer false positives.
+    "min_motion_area": 2600,
+    # Maximum contour area; rejects huge scene-wide changes (lighting/camera shifts).
+    "max_motion_area": 22000,
+    # Morphology kernel size for opening/closing; higher = more noise suppression.
+    "morph_kernel_size": 11,
+    # Minimum fill ratio (area / bounding-rect area); higher rejects wispy floor artifacts.
+    "min_contour_extent": 0.28,
+    # Maximum allowed elongation of contour bounding box; lower rejects streak-like blobs.
+    "max_contour_aspect_ratio": 2.6,
+    # Keep detections near entrance zone only; lower = stricter spatial barrier.
+    "max_distance_from_zone_px": 75,
+    # Max track association distance between cycles; larger tolerates sparse snapshots.
     "max_track_distance_px": 520,
+    # How many unmatched cycles a track survives before deletion.
     "track_ttl_frames": 8,
+    # Cooldown before same track can be counted again.
     "crossing_cooldown_sec": 5,
+    # Safety cap on in/out events per cycle.
     "max_crossings_per_cycle": 8,
-    # Ignore tiny centroid jitter near the polygon boundary.
+    # Minimum centroid movement to treat direction as meaningful.
     "min_direction_distance_px": 12,
-    # Require motion to have a meaningful component toward/away from zone center.
+    # Minimum movement projection toward/away from zone center for in/out decision.
     "min_projection_toward_zone_px": 6,
 }
 
@@ -39,11 +51,11 @@ def _dot(vector_a, vector_b):
     return vector_a[0] * vector_b[0] + vector_a[1] * vector_b[1]
 
 
-class DeLaGuerraCounter:
-    def __init__(self, config=None, output_path="images/de-la-guerra_occupancy.json"):
+class CarrilloCounter:
+    def __init__(self, config=None, output_path="images/carrillo_occupancy.json"):
         self.config = config or DEFAULT_CONFIG
         self.output_path = output_path
-        self.debug_overlay_path = "images/de-la-guerra_debug_overlay.jpg"
+        self.debug_overlay_path = "images/carrillo_debug_overlay.jpg"
         self.occupancy_state = {
             "occupancy": 0,
             "total_in": 0,
@@ -68,7 +80,9 @@ class DeLaGuerraCounter:
         zone_polygon = self._polygon_from_normalized(
             self.config["entrance_polygon_norm"], current_frame.shape
         )
-        moving_centroids = self._extract_motion_centroids(previous_frame, current_frame)
+        moving_centroids = self._extract_motion_centroids(
+            previous_frame, current_frame, zone_polygon
+        )
         now_unix = time.time()
         cycle_in, cycle_out = self._update_tracks_and_count_crossings(
             moving_centroids, zone_polygon, now_unix
@@ -134,7 +148,7 @@ class DeLaGuerraCounter:
             return projection >= min_projection
         return projection <= -min_projection
 
-    def _extract_motion_centroids(self, previous_frame, current_frame):
+    def _extract_motion_centroids(self, previous_frame, current_frame, zone_polygon):
         prev_gray = cv2.cvtColor(previous_frame, cv2.COLOR_BGR2GRAY)
         curr_gray = cv2.cvtColor(current_frame, cv2.COLOR_BGR2GRAY)
 
@@ -155,7 +169,17 @@ class DeLaGuerraCounter:
         centroids = []
         for contour in contours:
             area = cv2.contourArea(contour)
-            if area < self.config["min_motion_area"]:
+            if area < self.config["min_motion_area"] or area > self.config["max_motion_area"]:
+                continue
+
+            _, _, width, height = cv2.boundingRect(contour)
+            if width == 0 or height == 0:
+                continue
+            extent = area / float(width * height)
+            aspect_ratio = max(width, height) / float(max(min(width, height), 1))
+            if extent < self.config["min_contour_extent"]:
+                continue
+            if aspect_ratio > self.config["max_contour_aspect_ratio"]:
                 continue
 
             moments = cv2.moments(contour)
@@ -164,6 +188,11 @@ class DeLaGuerraCounter:
 
             centroid_x = int(moments["m10"] / moments["m00"])
             centroid_y = int(moments["m01"] / moments["m00"])
+            polygon_distance = cv2.pointPolygonTest(
+                zone_polygon, (centroid_x, centroid_y), True
+            )
+            if polygon_distance < -self.config["max_distance_from_zone_px"]:
+                continue
             centroids.append((centroid_x, centroid_y))
 
         return centroids
@@ -266,7 +295,7 @@ class DeLaGuerraCounter:
 
     def _build_payload(self, cycle_in, cycle_out, zone_polygon):
         return {
-            "hall": "de-la-guerra",
+            "hall": "carrillo",
             "timestamp_utc": datetime.now(timezone.utc).isoformat(),
             "occupancy": self.occupancy_state["occupancy"],
             "total_in": self.occupancy_state["total_in"],

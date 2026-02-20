@@ -10,7 +10,7 @@ if not consumer_key:
     raise RuntimeError("Missing CONSUMER_KEY in environment.")
 
 BASE_URL = "https://api.ucsb.edu/dining/cams/v2/still"
-DINING_HALLS = ["carrillo", "de-la-guerra", "ortega", "portola"]
+DINING_HALLS = ["carrillo", "ortega", "portola"]
 FETCH_INTERVAL_SECONDS = 5
 
 frames = {

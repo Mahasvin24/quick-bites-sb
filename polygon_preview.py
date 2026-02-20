@@ -4,11 +4,11 @@ import json
 import cv2
 import numpy as np
 
-from de_la_guerra_counter import DEFAULT_CONFIG
+from carrillo_counter import DEFAULT_CONFIG
 
 
-DEFAULT_IMAGE_PATH = "images/de-la-guerra_current.jpg"
-DEFAULT_OUTPUT_PATH = "images/de-la-guerra_polygon_preview.jpg"
+DEFAULT_IMAGE_PATH = "images/carrillo_current.jpg"
+DEFAULT_OUTPUT_PATH = "images/carrillo_polygon_preview.jpg"
 
 
 def _parse_polygon_norm(polygon_text):
@@ -37,7 +37,7 @@ def _norm_to_pixels(points_norm, width, height):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Draw an entrance polygon (normalized) on de-la-guerra current image."
+        description="Draw an entrance polygon (normalized) on carrillo current image."
     )
     parser.add_argument(
         "--polygon",
