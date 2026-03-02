@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import {
   DiningCommonsSelector,
@@ -8,13 +8,46 @@ import {
 } from "@/components/DiningCommonsSelector";
 import { MenuPanel } from "@/components/MenuPanel";
 import { WaterTank } from "@/components/WaterTank";
+import {
+  fetchMenu,
+  type MenuResponse,
+} from "@/lib/menuApi";
 
 export default function Home() {
   const [selectedCommons, setSelectedCommons] =
-    useState<DiningCommons>("De La Guerra");
+    useState<DiningCommons>("De la Guerra");
+  const [menu, setMenu] = useState<MenuResponse | null>(null);
+  const [menuError, setMenuError] = useState<string | null>(null);
+  const [menuLoading, setMenuLoading] = useState(true);
 
   // Internal water level value between 0 and 1.
   const waterLevel = 0.72;
+
+  useEffect(() => {
+    let cancelled = false;
+    setMenuLoading(true);
+    setMenuError(null);
+    fetchMenu(selectedCommons)
+      .then((data) => {
+        if (!cancelled) {
+          setMenu(data);
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setMenuError(err instanceof Error ? err.message : String(err));
+          setMenu(null);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setMenuLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedCommons]);
 
   return (
     <div className="flex h-screen w-screen flex-col bg-linear-to-b from-background to-muted text-foreground">
@@ -45,6 +78,19 @@ export default function Home() {
           <section className="flex flex-1 sm:flex-[1.2]">
             <MenuPanel
               subtitle={`${selectedCommons} · Featured selection`}
+              menu={menu}
+              loading={menuLoading}
+              error={menuError}
+              onRetry={() => {
+                setMenuError(null);
+                setMenuLoading(true);
+                fetchMenu(selectedCommons)
+                  .then(setMenu)
+                  .catch((err) =>
+                    setMenuError(err instanceof Error ? err.message : String(err))
+                  )
+                  .finally(() => setMenuLoading(false));
+              }}
             />
           </section>
         </main>

@@ -2,3 +2,5 @@ requests
 dotenv
 numpy
 opencv-python
+numpy
+Pillow

@@ -1,4 +1,6 @@
 import type { DiningCommons } from "@/components/DiningCommonsSelector";
+import { cn } from "@/lib/utils";
+import Wave from "react-wavify";
 
 interface WaterTankProps {
   level: number;
@@ -10,16 +12,43 @@ export function WaterTank({ level, selectedCommons }: WaterTankProps) {
     ? Math.min(1, Math.max(0, level))
     : 0;
   const percentage = Math.round(clampedLevel * 100);
+  const isCarillo = selectedCommons === "Carillo";
 
   return (
-    <div className="water-tank aspect-square w-full max-w-sm">
+    <div
+      className={cn(
+        "water-tank aspect-square w-full max-w-sm",
+        isCarillo && "water-tank--carillo max-w-md",
+      )}
+    >
       <div
-        className="water-fill"
-        style={{ height: `${percentage}%` }}
+        className={cn("water-fill", isCarillo && "water-fill--carillo")}
+        style={{ height: `${clampedLevel * 100}%` }}
         aria-hidden="true"
       >
-        <div className="water-wave" />
+        <Wave
+          fill="oklch(0.76 0.11 215)"
+          paused={false}
+          options={{
+            height: 18,
+            amplitude: 10 + clampedLevel * 18,
+            speed: 0.18,
+            points: 3,
+          }}
+          style={{
+            width: "200%",
+            height: "120%",
+            transform: "translateX(-25%)",
+          }}
+        />
       </div>
+
+      {isCarillo && (
+        <div
+          aria-hidden="true"
+          className="water-carillo-outline pointer-events-none absolute inset-6 sm:inset-7"
+        />
+      )}
 
       <div className="water-tank-inner">
         <div className="flex items-center justify-between text-[0.7rem] font-medium uppercase tracking-[0.2em] text-muted-foreground">
@@ -43,7 +72,7 @@ export function WaterTank({ level, selectedCommons }: WaterTankProps) {
 
         <div className="flex items-center justify-between text-[0.7rem] text-muted-foreground">
           <span>Live estimate</span>
-          <span>Updates periodically</span>
+          <span>Animated surface</span>
         </div>
       </div>
     </div>
