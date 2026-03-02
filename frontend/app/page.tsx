@@ -51,7 +51,7 @@ export default function Home() {
 
   return (
     <div className="flex h-screen w-screen flex-col bg-linear-to-b from-background to-muted text-foreground">
-      <div className="mx-auto flex h-full w-full max-w-6xl flex-col px-5 py-5 sm:px-8 sm:py-8">
+      <div className="mx-auto flex h-full w-full max-w-7xl flex-col px-5 py-5 sm:px-8 sm:py-8">
         <header className="mb-5 flex flex-col gap-3 sm:mb-8 sm:flex-row sm:items-end sm:justify-between">
           <div>
             <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
@@ -71,11 +71,11 @@ export default function Home() {
         </div>
 
         <main className="flex min-h-0 flex-1 flex-col gap-6 sm:flex-row sm:gap-8">
-          <section className="flex flex-1 items-center justify-center">
+          <section className="flex min-w-0 flex-1 shrink-0 items-center justify-center px-4 py-6 sm:flex-[5] sm:px-6 sm:py-8">
             <WaterTank level={waterLevel} selectedCommons={selectedCommons} />
           </section>
 
-          <section className="flex flex-1 sm:flex-[1.2]">
+          <section className="min-w-0 flex-1 sm:flex-[9]">
             <MenuPanel
               subtitle={`${selectedCommons} · Featured selection`}
               menu={menu}

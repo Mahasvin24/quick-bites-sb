@@ -5,21 +5,30 @@ import { useEffect, useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
 import type { Meal, MenuResponse } from "@/lib/menuApi";
 
+/** Meal windows: Mon–Fri Breakfast 7:15–10, Lunch 11–3, Dinner 5–8:30; Sat/Sun Brunch 10–2, Dinner 5–8:30 */
 function getDefaultMealIndex(meals: Meal[]): number {
   if (!meals.length) return 0;
-  const hour = new Date().getHours();
+  const now = new Date();
+  const day = now.getDay(); // 0 = Sunday, 6 = Saturday
+  const minSinceMidnight = now.getHours() * 60 + now.getMinutes();
+  const isWeekend = day === 0 || day === 6;
+
+  let desiredName: string;
+  if (isWeekend) {
+    // Brunch 10:00–14:00, Dinner 17:00–20:30
+    if (minSinceMidnight >= 10 * 60 && minSinceMidnight < 14 * 60) desiredName = "brunch";
+    else if (minSinceMidnight >= 17 * 60 && minSinceMidnight < 20 * 60 + 30) desiredName = "dinner";
+    else desiredName = minSinceMidnight < 14 * 60 ? "brunch" : "dinner";
+  } else {
+    // Weekday: Breakfast 7:15–10:00, Lunch 11:00–15:00, Dinner 17:00–20:30
+    if (minSinceMidnight >= 7 * 60 + 15 && minSinceMidnight < 10 * 60) desiredName = "breakfast";
+    else if (minSinceMidnight >= 11 * 60 && minSinceMidnight < 15 * 60) desiredName = "lunch";
+    else if (minSinceMidnight >= 17 * 60 && minSinceMidnight < 20 * 60 + 30) desiredName = "dinner";
+    else desiredName = minSinceMidnight < 10 * 60 ? "breakfast" : minSinceMidnight < 15 * 60 ? "lunch" : "dinner";
+  }
+
   const nameLower = (name: string) => (name || "").toLowerCase();
-  const index = meals.findIndex((m) => {
-    const n = nameLower(m.name);
-    if (n.includes("breakfast") && hour >= 6 && hour < 11) return true;
-    if (n.includes("lunch") && hour >= 11 && hour < 15) return true;
-    if (n.includes("dinner") || n.includes("supper")) {
-      if (hour >= 16 || hour < 9) return true;
-    }
-    if (n.includes("late") && hour >= 20) return true;
-    if (n.includes("brunch") && hour >= 9 && hour < 14) return true;
-    return false;
-  });
+  const index = meals.findIndex((m) => nameLower(m.name).includes(desiredName));
   return index >= 0 ? index : 0;
 }
 
@@ -61,11 +70,11 @@ export function MenuPanel({
           </h2>
           <p className="text-sm text-muted-foreground">{subtitle}</p>
         </header>
-        <div className="flex-1 space-y-3">
+        <div className="grid flex-1 grid-cols-2 gap-3">
           {[1, 2, 3, 4, 5, 6].map((i) => (
             <div
               key={i}
-              className="h-6 w-full max-w-[85%] animate-pulse rounded-lg bg-muted"
+              className="h-6 animate-pulse rounded-lg bg-muted"
               style={{ width: `${70 + (i % 3) * 10}%` }}
             />
           ))}
@@ -142,7 +151,7 @@ export function MenuPanel({
               No menu items for this period.
             </p>
           ) : (
-            <div className="space-y-6">
+            <div className="grid grid-cols-2 gap-x-4 gap-y-3">
               {(() => {
                 const byStation = new Map<string, { name: string; items: string[] }>();
                 for (const it of currentMeal.items) {
@@ -153,11 +162,11 @@ export function MenuPanel({
                   byStation.get(station)!.items.push(it.name);
                 }
                 return Array.from(byStation.values()).map((station) => (
-                  <div key={station.name} className="space-y-2">
+                  <div key={station.name} className="space-y-1">
                     <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       {station.name}
                     </h3>
-                    <ul className="space-y-1">
+                    <ul className="space-y-0.5">
                       {station.items.map((itemName) => (
                         <li
                           key={`${station.name}-${itemName}`}

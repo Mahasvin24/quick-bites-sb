@@ -1,5 +1,5 @@
 import type { DiningCommons } from "@/components/DiningCommonsSelector";
-import { cn } from "@/lib/utils";
+import { LiveIndicator } from "@/components/LiveIndicator";
 import Wave from "react-wavify";
 
 interface WaterTankProps {
@@ -12,17 +12,11 @@ export function WaterTank({ level, selectedCommons }: WaterTankProps) {
     ? Math.min(1, Math.max(0, level))
     : 0;
   const percentage = Math.round(clampedLevel * 100);
-  const isCarillo = selectedCommons === "Carillo";
 
   return (
-    <div
-      className={cn(
-        "water-tank aspect-square w-full max-w-sm",
-        isCarillo && "water-tank--carillo max-w-md",
-      )}
-    >
+    <div className="water-tank aspect-square w-full max-w-md">
       <div
-        className={cn("water-fill", isCarillo && "water-fill--carillo")}
+        className="water-fill"
         style={{ height: `${clampedLevel * 100}%` }}
         aria-hidden="true"
       >
@@ -42,13 +36,6 @@ export function WaterTank({ level, selectedCommons }: WaterTankProps) {
           }}
         />
       </div>
-
-      {isCarillo && (
-        <div
-          aria-hidden="true"
-          className="water-carillo-outline pointer-events-none absolute inset-6 sm:inset-7"
-        />
-      )}
 
       <div className="water-tank-inner">
         <div className="flex items-center justify-between text-[0.7rem] font-medium uppercase tracking-[0.2em] text-muted-foreground">
@@ -71,8 +58,13 @@ export function WaterTank({ level, selectedCommons }: WaterTankProps) {
         </div>
 
         <div className="flex items-center justify-between text-[0.7rem] text-muted-foreground">
-          <span>Live estimate</span>
-          <span>Animated surface</span>
+          <LiveIndicator
+            label="Live estimate"
+            color="#ff2d2d"
+            size="sm"
+            pulse
+            showLabel
+          />
         </div>
       </div>
     </div>

@@ -7,8 +7,8 @@ from typing import Any
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
-from .config import MENU_CACHE_TTL_SECONDS, UCSB_API_KEY
-from .ucsb_dining import fetch_menu
+from app.config import MENU_CACHE_TTL_SECONDS, UCSB_API_KEY
+from app.ucsb_dining import fetch_menu
 
 app = FastAPI(title="QuickBiteSB Backend", version="0.1.0")
 
