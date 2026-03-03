@@ -22,7 +22,7 @@ IMAGE_PATHS = [
 ]
 OUTPUT_DIR = os.path.join(SCRIPT_DIR, "output", "carrillo")
 SAMPLE_INTERVAL = 5
-ENTRANCE_ZONE_X = (0.2, 0.8)
+ENTRANCE_ZONE_X = (0.0, 1.0)
 YOLO_MODEL = "yolov8n.pt"
 YOLO_POSE_MODEL = "yolov8n-pose.pt"
 CONFIDENCE_THRESHOLD = 0.5
@@ -88,16 +88,10 @@ class FrameProcessor:
         return detections
 
     def filter_entrance_zone(self, detections, frame_shape):
-        """Keep only detections whose bbox center is inside the entrance zone."""
-        h, w = frame_shape[:2]
-        x_min = ENTRANCE_ZONE_X[0] * w
-        x_max = ENTRANCE_ZONE_X[1] * w
-        in_zone = []
-        for d in detections:
-            cx, cy = d["centroid"]
-            if x_min <= cx <= x_max and 0 <= cy <= h:
-                in_zone.append(d)
-        return in_zone
+        """Return all detections (use full-frame, no horizontal cropping)."""
+        # Previous behavior limited to a horizontal entrance band; we now keep
+        # all detections so the model considers the entire image.
+        return list(detections)
 
     def _pose_direction(self, kpts, debug=False, person_idx=0):
         """
