@@ -2,10 +2,13 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+
+from app.occupancy_store import HallOccupancy, load_occupancy
+from app.occupancy_worker import start_occupancy_worker
 
 from app.config import MENU_CACHE_TTL_SECONDS, UCSB_API_KEY
 from app.ucsb_dining import fetch_menu
@@ -26,6 +29,7 @@ app.add_middleware(
 # In-memory cache: key = (hall_slug, date_str), value = (payload, expiry_ts)
 _menu_cache: dict[tuple[str, str], tuple[dict[str, Any], float]] = {}
 
+_occupancy_worker = None
 
 def _cache_get(hall: str, date_str: str) -> dict[str, Any] | None:
     key = (hall, date_str)
@@ -50,6 +54,17 @@ def healthz() -> dict[str, str]:
 
 
 ALLOWED_HALL_SLUGS = {"carrillo", "de-la-guerra", "ortega", "portola"}
+
+
+@app.on_event("startup")
+async def _startup() -> None:
+    # Fire-and-forget occupancy worker; it keeps counting in the background.
+    global _occupancy_worker  # noqa: PLW0603
+    try:
+        _occupancy_worker = await start_occupancy_worker()
+    except Exception as exc:  # noqa: BLE001
+        # Do not prevent backend from starting if the worker fails.
+        print(f"[startup] Failed to start occupancy worker: {exc}")
 
 
 @app.get("/v1/menus/{hall}")
@@ -87,3 +102,42 @@ async def get_menus(
     if meal:
         out["meals"] = [m for m in out.get("meals", []) if (m.get("name") or "").lower() == meal.lower()]
     return out
+
+
+def _serialize_occupancy(snapshot: HallOccupancy) -> Dict[str, Any]:
+    percent_full = 0.0
+    if snapshot.max_capacity > 0:
+        percent_full = max(min(snapshot.net_occupancy / snapshot.max_capacity * 100.0, 100.0), 0.0)
+    return {
+        "hall": snapshot.hall,
+        "timestamp": snapshot.timestamp,
+        "total_entered": snapshot.total_entered,
+        "total_exited": snapshot.total_exited,
+        "net_occupancy": snapshot.net_occupancy,
+        "max_capacity": snapshot.max_capacity,
+        "percent_full": percent_full,
+    }
+
+
+@app.get("/v1/occupancy/{hall}")
+async def get_occupancy(hall: str) -> Dict[str, Any]:
+    """Return latest occupancy snapshot for a dining hall."""
+    hall_slug = hall.lower().strip()
+    if hall_slug not in ALLOWED_HALL_SLUGS:
+        raise HTTPException(status_code=404, detail=f"Unknown dining hall: {hall}")
+
+    snapshot = load_occupancy(hall_slug)
+    if snapshot is None:
+        raise HTTPException(status_code=404, detail="No occupancy data available yet")
+    return _serialize_occupancy(snapshot)
+
+
+@app.get("/v1/occupancy")
+async def list_occupancy() -> List[Dict[str, Any]]:
+    """Return latest occupancy snapshot for all halls that have data."""
+    results: List[Dict[str, Any]] = []
+    for hall in sorted(ALLOWED_HALL_SLUGS):
+        snap = load_occupancy(hall)
+        if snap is not None:
+            results.append(_serialize_occupancy(snap))
+    return results

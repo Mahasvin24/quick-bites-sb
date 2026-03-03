@@ -11,6 +11,8 @@ import { WaterTank } from "@/components/WaterTank";
 import {
   fetchMenu,
   type MenuResponse,
+  fetchOccupancyForCommons,
+  type OccupancySnapshot,
 } from "@/lib/menuApi";
 
 export default function Home() {
@@ -19,9 +21,8 @@ export default function Home() {
   const [menu, setMenu] = useState<MenuResponse | null>(null);
   const [menuError, setMenuError] = useState<string | null>(null);
   const [menuLoading, setMenuLoading] = useState(true);
-
-  // Internal water level value between 0 and 1.
-  const waterLevel = 0.72;
+  const [occupancy, setOccupancy] = useState<OccupancySnapshot | null>(null);
+  const [occupancyError, setOccupancyError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -48,6 +49,32 @@ export default function Home() {
       cancelled = true;
     };
   }, [selectedCommons]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setOccupancyError(null);
+    setOccupancy(null);
+    fetchOccupancyForCommons(selectedCommons)
+      .then((data) => {
+        if (!cancelled) {
+          setOccupancy(data);
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          // For now we just record the error; the UI will show 0% if null.
+          setOccupancyError(err instanceof Error ? err.message : String(err));
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedCommons]);
+
+  const waterLevel =
+    occupancy && Number.isFinite(occupancy.percent_full)
+      ? Math.max(0, Math.min(1, occupancy.percent_full / 100))
+      : 0;
 
   return (
     <div className="flex h-screen w-screen flex-col bg-linear-to-b from-background to-muted text-foreground">
