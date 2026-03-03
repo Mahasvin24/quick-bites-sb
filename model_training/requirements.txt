@@ -4,3 +4,4 @@ numpy
 opencv-python
 numpy
 Pillow
+ultralytics>=8.0.0
