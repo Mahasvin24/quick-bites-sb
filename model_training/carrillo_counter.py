@@ -27,8 +27,8 @@ YOLO_MODEL = "yolov8n.pt"
 YOLO_POSE_MODEL = "yolov8n-pose.pt"
 CONFIDENCE_THRESHOLD = 0.5
 MATCH_CENTROID_FRACTION = 0.2
-NOSE_CONF_THRESHOLD = 0.5
-SHOULDER_CONF_THRESHOLD = 0.5
+NOSE_CONF_THRESHOLD = 0.4
+SHOULDER_CONF_THRESHOLD = 0.6
 
 # COCO keypoint indices
 KPT_NOSE = 0
@@ -110,6 +110,8 @@ class FrameProcessor:
         if debug:
             print(f"  person {person_idx}: nose conf={nose_conf:.3f} xy=({nose[0]:.1f},{nose[1]:.1f}) "
                   f"L_sh conf={left_conf:.3f} R_sh conf={right_conf:.3f}")
+        # Prefer classifying "entering" when we have a reasonably confident nose
+        # and at least somewhat visible shoulders.
         if nose_conf > NOSE_CONF_THRESHOLD and left_conf > 0 and right_conf > 0:
             nose_y = float(nose[1])
             left_y = float(left_sh[1])
@@ -118,7 +120,12 @@ class FrameProcessor:
             y_hi = max(left_y, right_y)
             if y_lo <= nose_y <= y_hi:
                 return "entering"  # facing camera = walking in
-        if nose_conf <= NOSE_CONF_THRESHOLD and left_conf > SHOULDER_CONF_THRESHOLD and right_conf > SHOULDER_CONF_THRESHOLD:
+        # If the nose is strong but the simple geometric test fails (e.g. tilted
+        # or off-center), still treat as entering instead of leaving it ambiguous.
+        if nose_conf > NOSE_CONF_THRESHOLD and (left_conf > 0 or right_conf > 0):
+            return "entering"
+        # Make "exiting" stricter so we only count very clear away-facing poses.
+        if nose_conf < (NOSE_CONF_THRESHOLD * 0.7) and left_conf > SHOULDER_CONF_THRESHOLD and right_conf > SHOULDER_CONF_THRESHOLD:
             return "exiting"  # facing away = walking out
         return None
 
@@ -176,9 +183,10 @@ class FrameProcessor:
                     best_prev = p
             if best_prev is not None:
                 prev_area = best_prev.get("area", 0)
-                if area > prev_area:
+                # Require a noticeable size change; treat small changes as ambiguous.
+                if area > prev_area * 1.05:
                     d["direction"] = "entering"  # closer/larger = coming in
-                elif area < prev_area:
+                elif area < prev_area * 0.95:
                     d["direction"] = "exiting"  # farther/smaller = going out
         entered = sum(1 for d in person_detections if d["direction"] == "entering")
         exited = sum(1 for d in person_detections if d["direction"] == "exiting")

@@ -29,14 +29,52 @@ YOLO_MODEL = "yolov8n.pt"
 YOLO_POSE_MODEL = "yolov8n-pose.pt"
 CONFIDENCE_THRESHOLD = 0.5
 MATCH_CENTROID_FRACTION = 0.2
-NOSE_CONF_THRESHOLD = 0.5
-SHOULDER_CONF_THRESHOLD = 0.5
+# Bias slightly toward "entering" and require stronger evidence for "exiting".
+NOSE_CONF_THRESHOLD = 0.4
+SHOULDER_CONF_THRESHOLD = 0.6
 
 # COCO keypoint indices
 KPT_NOSE = 0
 KPT_LEFT_SHOULDER = 5
 KPT_RIGHT_SHOULDER = 6
 COCO_PERSON_CLS_ID = 0
+
+
+def detect_people_with_model(
+    det_model: YOLO, image_bgr: np.ndarray
+) -> List[dict[str, Any]]:
+    """Run YOLOv8 detection with a provided model and return person detections.
+
+    This helper is intentionally model-agnostic so it can be reused by
+    alternative counters (e.g. Ortega-specific Re-ID) without duplicating the
+    detection logic.
+    """
+    results = det_model(image_bgr, verbose=False)[0]
+    detections: List[dict[str, Any]] = []
+    if results.boxes is None:
+        return detections
+    boxes = results.boxes
+    for i in range(len(boxes)):
+        cls_id = int(boxes.cls[i].item())
+        if cls_id != COCO_PERSON_CLS_ID:
+            continue
+        conf = float(boxes.conf[i].item())
+        if conf < CONFIDENCE_THRESHOLD:
+            continue
+        xyxy = boxes.xyxy[i].cpu().numpy()
+        x1, y1, x2, y2 = xyxy
+        cx = (x1 + x2) / 2.0
+        cy = (y1 + y2) / 2.0
+        area = (x2 - x1) * (y2 - y1)
+        detections.append(
+            {
+                "bbox_xyxy": xyxy,
+                "confidence": conf,
+                "centroid": (float(cx), float(cy)),
+                "area": float(area),
+            }
+        )
+    return detections
 
 
 def _iou_box(box1_xyxy: np.ndarray, box2_xyxy: np.ndarray) -> float:
@@ -57,9 +95,9 @@ def _iou_box(box1_xyxy: np.ndarray, box2_xyxy: np.ndarray) -> float:
 class _FrameProcessor:
     """Internal helper that mirrors the original Carrillo FrameProcessor."""
 
-    def __init__(self) -> None:
-        self.total_entered = 0
-        self.total_exited = 0
+    def __init__(self, initial_entered: int = 0, initial_exited: int = 0) -> None:
+        self.total_entered = int(initial_entered)
+        self.total_exited = int(initial_exited)
         self._det_model = YOLO(YOLO_MODEL)
         self._pose_model = YOLO(YOLO_POSE_MODEL)
         self._prev_frame_data: List[dict[str, Any]] = []
@@ -69,32 +107,7 @@ class _FrameProcessor:
     # ------------------------------------------------------------------ #
     def detect_people(self, image_bgr: np.ndarray) -> List[dict[str, Any]]:
         """Run YOLOv8 detection; return list of person detections."""
-        results = self._det_model(image_bgr, verbose=False)[0]
-        detections: List[dict[str, Any]] = []
-        if results.boxes is None:
-            return detections
-        boxes = results.boxes
-        for i in range(len(boxes)):
-            cls_id = int(boxes.cls[i].item())
-            if cls_id != COCO_PERSON_CLS_ID:
-                continue
-            conf = float(boxes.conf[i].item())
-            if conf < CONFIDENCE_THRESHOLD:
-                continue
-            xyxy = boxes.xyxy[i].cpu().numpy()
-            x1, y1, x2, y2 = xyxy
-            cx = (x1 + x2) / 2.0
-            cy = (y1 + y2) / 2.0
-            area = (x2 - x1) * (y2 - y1)
-            detections.append(
-                {
-                    "bbox_xyxy": xyxy,
-                    "confidence": conf,
-                    "centroid": (float(cx), float(cy)),
-                    "area": float(area),
-                }
-            )
-        return detections
+        return detect_people_with_model(self._det_model, image_bgr)
 
     def filter_entrance_zone(
         self, detections: List[dict[str, Any]], frame_shape: Tuple[int, int, int]
@@ -125,6 +138,8 @@ class _FrameProcessor:
                 f"  person {person_idx}: nose conf={nose_conf:.3f} xy=({nose[0]:.1f},{nose[1]:.1f}) "
                 f"L_sh conf={left_conf:.3f} R_sh conf={right_conf:.3f}"
             )
+        # Prefer classifying "entering" when we have a reasonably confident nose
+        # and at least somewhat visible shoulders.
         if nose_conf > NOSE_CONF_THRESHOLD and left_conf > 0 and right_conf > 0:
             nose_y = float(nose[1])
             left_y = float(left_sh[1])
@@ -133,8 +148,13 @@ class _FrameProcessor:
             y_hi = max(left_y, right_y)
             if y_lo <= nose_y <= y_hi:
                 return "entering"  # facing camera = walking in
+        # If the nose is strong but the simple geometric test fails (e.g. tilted
+        # or off-center), still treat as entering instead of leaving it ambiguous.
+        if nose_conf > NOSE_CONF_THRESHOLD and (left_conf > 0 or right_conf > 0):
+            return "entering"
+        # Make "exiting" stricter so we only count very clear away-facing poses.
         if (
-            nose_conf <= NOSE_CONF_THRESHOLD
+            nose_conf < (NOSE_CONF_THRESHOLD * 0.7)
             and left_conf > SHOULDER_CONF_THRESHOLD
             and right_conf > SHOULDER_CONF_THRESHOLD
         ):
@@ -212,9 +232,10 @@ class _FrameProcessor:
                     best_prev = p
             if best_prev is not None:
                 prev_area = best_prev.get("area", 0.0)
-                if area > prev_area:
+                # Require a noticeable size change; treat small changes as ambiguous.
+                if area > prev_area * 1.05:
                     d["direction"] = "entering"  # closer/larger = coming in
-                elif area < prev_area:
+                elif area < prev_area * 0.95:
                     d["direction"] = "exiting"  # farther/smaller = going out
 
         entered = sum(1 for d in person_detections if d.get("direction") == "entering")
@@ -339,8 +360,8 @@ class PeopleCounterSnapshot:
 class PeopleCounter:
     """Stateful people counter reusable per dining hall."""
 
-    def __init__(self) -> None:
-        self._processor = _FrameProcessor()
+    def __init__(self, initial_entered: int = 0, initial_exited: int = 0) -> None:
+        self._processor = _FrameProcessor(initial_entered=initial_entered, initial_exited=initial_exited)
 
     @property
     def total_entered(self) -> int:

@@ -29,9 +29,29 @@ class OccupancyWorker:
     def __init__(self) -> None:
         self._stopped = asyncio.Event()
         self._camera_fetcher = CameraFetcher(get_default_image_dir())
-        self._counters: Dict[str, PeopleCounter] = {
-            hall: PeopleCounter() for hall in self._camera_fetcher.halls
-        }
+        # When the backend starts, assume each hall is already at a fixed
+        # percentage of its maximum capacity (all counted as "entered", none
+        # as "exited").
+        self._counters: Dict[str, PeopleCounter] = {}
+        for hall in self._camera_fetcher.halls:
+            max_cap = HALL_CAPACITY.get(hall, 0)
+            # Per-hall starting occupancy as a fraction of capacity.
+            if hall == "de-la-guerra":
+                frac = 0.63
+            elif hall == "carrillo":
+                frac = 0.29
+            elif hall == "portola":
+                frac = 0.76
+            elif hall == "ortega":
+                frac = 0.92
+            else:
+                frac = 0.5
+
+            baseline_entered = int(round(max_cap * frac)) if max_cap > 0 else 0
+            baseline_exited = 0
+            self._counters[hall] = PeopleCounter(
+                initial_entered=baseline_entered, initial_exited=baseline_exited
+            )
         self._poll_interval = _get_poll_interval()
 
     async def run(self) -> None:
