@@ -1,11 +1,12 @@
 """
 Carrillo dining hall entry/exit counter using YOLOv8 detection + pose.
-Processes images from IMAGE_DIR, classifies people as entering or exiting,
-and writes annotated frames to OUTPUT_DIR.
+Continuously analyzes carrillo_previous.jpg and carrillo_current.jpg every
+SAMPLE_INTERVAL seconds, keeps a running count, and writes annotated frames to OUTPUT_DIR.
 """
 
 import argparse
 import os
+import time
 
 import cv2
 import numpy as np
@@ -14,9 +15,12 @@ from ultralytics import YOLO
 # -----------------------------------------------------------------------------
 # Configuration
 # -----------------------------------------------------------------------------
-IMAGE_DIR = "model_training/images/"
-OUTPUT_DIR = "model_training/output/carrillo/"
-DINING_HALL = "carrillo"  # substring in filename; "carrillo" matches carrillo_current.jpg from UCSB cams
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+IMAGE_PATHS = [
+    os.path.join(SCRIPT_DIR, "images", "carrillo_previous.jpg"),
+    os.path.join(SCRIPT_DIR, "images", "carrillo_current.jpg"),
+]
+OUTPUT_DIR = os.path.join(SCRIPT_DIR, "output", "carrillo")
 SAMPLE_INTERVAL = 5
 ENTRANCE_ZONE_X = (0.2, 0.8)
 YOLO_MODEL = "yolov8n.pt"
@@ -223,65 +227,60 @@ def draw_annotations(image_bgr, person_detections, frame_shape, entered, exited,
     return out
 
 
-def discover_and_sort_images(image_dir, dining_hall):
-    """List image paths under image_dir whose basename contains dining_hall; sort by filename."""
-    image_dir = os.path.normpath(image_dir)
-    if not os.path.isdir(image_dir):
-        return []
-    paths = []
-    for name in os.listdir(image_dir):
-        if dining_hall.lower() not in name.lower():
-            continue
-        path = os.path.join(image_dir, name)
-        if os.path.isfile(path) and name.lower().endswith((".jpg", ".jpeg", ".png", ".bmp")):
-            paths.append(path)
-    paths.sort(key=lambda p: os.path.basename(p))
-    return paths
-
-
 def main():
-    parser = argparse.ArgumentParser(description="Carrillo entry/exit counter (YOLOv8)")
+    parser = argparse.ArgumentParser(description="Carrillo entry/exit counter (YOLOv8) – continuous mode")
     parser.add_argument("--debug", action="store_true", help="Print keypoint coords and confidence per person")
     args = parser.parse_args()
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
-    paths = discover_and_sort_images(IMAGE_DIR, DINING_HALL)
-    if not paths:
-        print(f"No images found in {IMAGE_DIR} with '{DINING_HALL}' in filename.")
-        return
-
     processor = FrameProcessor()
     prev_frame_data = []
 
-    for idx, path in enumerate(paths):
-        img = cv2.imread(path)
-        if img is None:
-            print(f"Skip unreadable: {path}")
-            continue
-        h, w = img.shape[:2]
-        detections = processor.detect_people(img)
-        in_zone = processor.filter_entrance_zone(detections, img.shape)
-        entered, exited, updated = processor.classify_direction(
-            in_zone, img, prev_frame_data, w, debug=args.debug
-        )
-        processor.update_counts(entered, exited)
-        annotated = draw_annotations(
-            img, updated, img.shape,
-            processor.total_entered, processor.total_exited, processor.net_occupancy
-        )
-        out_name = os.path.basename(path)
-        out_path = os.path.join(OUTPUT_DIR, out_name)
-        cv2.imwrite(out_path, annotated)
-        prev_frame_data = [
-            {"centroid": d["centroid"], "area": d["area"], "direction": d.get("direction")}
-            for d in updated
-        ]
+    print(f"Running every {SAMPLE_INTERVAL}s on: {IMAGE_PATHS[0]!r}, {IMAGE_PATHS[1]!r}")
+    print("Press Ctrl+C to stop.\n")
 
-    print("Final summary:")
-    print(f"  Total entered:  {processor.total_entered}")
-    print(f"  Total exited:   {processor.total_exited}")
-    print(f"  Net occupancy: {processor.net_occupancy}")
-    print(f"  Images processed: {len(paths)}")
+    try:
+        while True:
+            for path in IMAGE_PATHS:
+                if not os.path.isfile(path):
+                    print(f"Missing: {path}")
+                    continue
+                img = cv2.imread(path)
+                if img is None:
+                    print(f"Could not read: {path}")
+                    continue
+                h, w = img.shape[:2]
+                detections = processor.detect_people(img)
+                in_zone = processor.filter_entrance_zone(detections, img.shape)
+                entered, exited, updated = processor.classify_direction(
+                    in_zone, img, prev_frame_data, w, debug=args.debug
+                )
+                processor.update_counts(entered, exited)
+                annotated = draw_annotations(
+                    img,
+                    updated,
+                    img.shape,
+                    processor.total_entered,
+                    processor.total_exited,
+                    processor.net_occupancy,
+                )
+                out_name = os.path.basename(path)
+                out_path = os.path.join(OUTPUT_DIR, out_name)
+                cv2.imwrite(out_path, annotated)
+                prev_frame_data = [
+                    {"centroid": d["centroid"], "area": d["area"], "direction": d.get("direction")}
+                    for d in updated
+                ]
+            print(
+                f"Entered: {processor.total_entered} | Exited: {processor.total_exited} | "
+                f"Net: {processor.net_occupancy}"
+            )
+            time.sleep(SAMPLE_INTERVAL)
+    except KeyboardInterrupt:
+        print("\nStopped.")
+        print(f"  Total entered:  {processor.total_entered}")
+        print(f"  Total exited:   {processor.total_exited}")
+        print(f"  Net occupancy:  {processor.net_occupancy}")
 
 
 if __name__ == "__main__":
