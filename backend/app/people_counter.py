@@ -100,6 +100,7 @@ class _FrameProcessor:
         self.total_exited = int(initial_exited)
         self._det_model = YOLO(YOLO_MODEL)
         self._pose_model = YOLO(YOLO_POSE_MODEL)
+        # Only the immediately previous frame; no long-term "who has been seen" storage.
         self._prev_frame_data: List[dict[str, Any]] = []
 
     # ------------------------------------------------------------------ #
@@ -182,7 +183,9 @@ class _FrameProcessor:
             for d in person_detections:
                 d["direction"] = None
                 d["keypoints"] = None
-            return self._resolve_and_count(person_detections, frame_width, debug)
+            return self._resolve_and_count(
+                person_detections, image_bgr, frame_width, debug
+            )
 
         kpt_data = pose_keypoints.data.cpu().numpy()
 
@@ -206,37 +209,92 @@ class _FrameProcessor:
                     kpts, debug=debug, person_idx=person_idx
                 )
 
-        return self._resolve_and_count(person_detections, frame_width, debug)
+        return self._resolve_and_count(person_detections, image_bgr, frame_width, debug)
 
     def _resolve_and_count(
         self,
         person_detections: List[dict[str, Any]],
+        image_bgr: np.ndarray,
         frame_width: int,
         debug: bool = False,
     ) -> Tuple[int, int, List[dict[str, Any]]]:
-        """Resolve ambiguous with bbox-size; compute entered/exited counts."""
+        """Resolve ambiguous with bbox-size and appearance; compute counts.
+
+        "Seen" is scoped only to the previous frame: we compare current detections
+        to _prev_frame_data (last frame only). We do not store any long-term
+        state about who has or has not been seen.
+
+        If a detection closely matches a previous-frame detection in both
+        centroid and average pixel value, it is marked as \"seen\" and does not
+        change the entered/exited counts. Each previous-frame person can match
+        at most one current-frame person (1:1) so we don't over-mark \"seen\".
+        Otherwise we fall back to bbox-size change to infer direction.
+        """
         _ = debug  # currently unused in this path
+        h, w = image_bgr.shape[:2]
         match_dist = MATCH_CENTROID_FRACTION * frame_width
+
+        def _avg_color(
+            bbox_xyxy: np.ndarray,
+        ) -> Tuple[float, float, float] | None:
+            x1, y1, x2, y2 = bbox_xyxy
+            x1i = max(int(x1), 0)
+            y1i = max(int(y1), 0)
+            x2i = min(int(x2), w)
+            y2i = min(int(y2), h)
+            if x2i <= x1i or y2i <= y1i:
+                return None
+            patch = image_bgr[y1i:y2i, x1i:x2i]
+            if patch.size == 0:
+                return None
+            mean_bgr = patch.reshape(-1, 3).mean(axis=0)
+            return float(mean_bgr[0]), float(mean_bgr[1]), float(mean_bgr[2])
+
+        # 1:1 matching: each previous-frame detection can only mark one current as "seen"
+        used_prev_indices: set[int] = set()
+
         for d in person_detections:
-            if d.get("direction") is not None:
-                continue
             cx, cy = d["centroid"]
             area = d["area"]
             best_dist = float("inf")
             best_prev: dict[str, Any] | None = None
-            for p in self._prev_frame_data:
+            best_prev_idx = -1
+            for idx, p in enumerate(self._prev_frame_data):
+                if idx in used_prev_indices:
+                    continue
                 pcx, pcy = p.get("centroid", (0.0, 0.0))
                 dist = float(np.hypot(cx - pcx, cy - pcy))
                 if dist < match_dist and dist < best_dist:
                     best_dist = dist
                     best_prev = p
+                    best_prev_idx = idx
             if best_prev is not None:
-                prev_area = best_prev.get("area", 0.0)
-                # Require a noticeable size change; treat small changes as ambiguous.
-                if area > prev_area * 1.05:
-                    d["direction"] = "entering"  # closer/larger = coming in
-                elif area < prev_area * 0.95:
-                    d["direction"] = "exiting"  # farther/smaller = going out
+                # Compare average color inside the box; if very similar, treat as
+                # the same person lingering in place and mark as seen.
+                prev_color = best_prev.get("avg_color")
+                curr_color = _avg_color(d["bbox_xyxy"])
+                if prev_color is not None and curr_color is not None:
+                    diff = np.linalg.norm(
+                        np.array(curr_color, dtype=float)
+                        - np.array(prev_color, dtype=float)
+                    )
+                    if diff < 20.0:
+                        d["seen"] = True
+                        used_prev_indices.add(best_prev_idx)
+                        # Clear any pose-based direction so this person does
+                        # not keep getting re-counted every frame.
+                        d["direction"] = None
+                        continue
+
+                # Only fall back to area-based direction if we do not already
+                # have a pose-based decision.
+                if d.get("direction") is None:
+                    prev_area = best_prev.get("area", 0.0)
+                    # Require a noticeable size change; treat small changes as ambiguous.
+                    if area > prev_area * 1.05:
+                        d["direction"] = "entering"  # closer/larger = coming in
+                    elif area < prev_area * 0.95:
+                        d["direction"] = "exiting"  # farther/smaller = going out
 
         entered = sum(1 for d in person_detections if d.get("direction") == "entering")
         exited = sum(1 for d in person_detections if d.get("direction") == "exiting")
@@ -257,15 +315,36 @@ class _FrameProcessor:
         )
         self.total_entered += entered
         self.total_exited += exited
-        # store minimal previous-frame data for next iteration
-        self._prev_frame_data = [
-            {
-                "centroid": d["centroid"],
-                "area": d["area"],
-                "direction": d.get("direction"),
-            }
-            for d in updated
-        ]
+        # Store minimal previous-frame data for next iteration only (no long-term seen state).
+        h, w = image_bgr.shape[:2]
+
+        def _avg_color_for_prev(
+            bbox_xyxy: np.ndarray,
+        ) -> Tuple[float, float, float] | None:
+            x1, y1, x2, y2 = bbox_xyxy
+            x1i = max(int(x1), 0)
+            y1i = max(int(y1), 0)
+            x2i = min(int(x2), w)
+            y2i = min(int(y2), h)
+            if x2i <= x1i or y2i <= y1i:
+                return None
+            patch = image_bgr[y1i:y2i, x1i:x2i]
+            if patch.size == 0:
+                return None
+            mean_bgr = patch.reshape(-1, 3).mean(axis=0)
+            return float(mean_bgr[0]), float(mean_bgr[1]), float(mean_bgr[2])
+
+        self._prev_frame_data = []
+        for d in updated:
+            avg_color = _avg_color_for_prev(d["bbox_xyxy"])
+            self._prev_frame_data.append(
+                {
+                    "centroid": d["centroid"],
+                    "area": d["area"],
+                    "direction": d.get("direction"),
+                    "avg_color": avg_color,
+                }
+            )
         return entered, exited, updated
 
 
@@ -276,25 +355,30 @@ def draw_annotations(
     exited: int,
     net_occupancy: int,
 ) -> np.ndarray:
-    """Draw boxes (green=entering, red=exiting), keypoints, and HUD."""
+    """Draw boxes (green=entering, red=exiting, gray=neutral/seen), keypoints, HUD."""
     out = image_bgr.copy()
     for d in person_detections:
         xyxy = d["bbox_xyxy"]
         x1, y1, x2, y2 = map(int, xyxy)
         direction = d.get("direction")
+        seen = d.get("seen", False)
         if direction == "entering":
             color = (0, 255, 0)
         elif direction == "exiting":
             color = (0, 0, 255)
+        elif seen:
+            color = (64, 64, 64)
         else:
             color = (128, 128, 128)
         cv2.rectangle(out, (x1, y1), (x2, y2), color, 2)
 
+        label = None
         if direction in ("entering", "exiting"):
             label = "enter" if direction == "entering" else "exit"
-            (tw, th), _ = cv2.getTextSize(
-                label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2
-            )
+        if seen and not direction:
+            label = "seen"
+        if label:
+            (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
             tx = x1
             ty = max(y1 - 4, th + 2)
             cv2.rectangle(
@@ -322,27 +406,28 @@ def draw_annotations(
                 if c > 0.3:
                     cv2.circle(out, (int(x), int(y)), 3, (0, 255, 255), -1)
 
-    hud = f"Entered: {entered} | Exited: {exited} | Net occupancy: {net_occupancy}"
-    cv2.putText(
-        out,
-        hud,
-        (10, 30),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.7,
-        (255, 255, 255),
-        2,
-        cv2.LINE_AA,
-    )
-    cv2.putText(
-        out,
-        hud,
-        (10, 30),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.7,
-        (0, 0, 0),
-        1,
-        cv2.LINE_AA,
-    )
+    # Temporarily commented out: entered, exited, and net occupancy count on image
+    # hud = f"Entered: {entered} | Exited: {exited} | Net occupancy: {net_occupancy}"
+    # cv2.putText(
+    #     out,
+    #     hud,
+    #     (10, 30),
+    #     cv2.FONT_HERSHEY_SIMPLEX,
+    #     0.7,
+    #     (255, 255, 255),
+    #     2,
+    #     cv2.LINE_AA,
+    # )
+    # cv2.putText(
+    #     out,
+    #     hud,
+    #     (10, 30),
+    #     cv2.FONT_HERSHEY_SIMPLEX,
+    #     0.7,
+    #     (0, 0, 0),
+    #     1,
+    #     cv2.LINE_AA,
+    # )
     return out
 
 
@@ -404,4 +489,6 @@ class PeopleCounter:
             snap.net_occupancy,
         )
         return snap, annotated, detections
+
+
 

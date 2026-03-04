@@ -43,7 +43,7 @@ class OccupancyWorker:
             elif hall == "portola":
                 frac = 0.76
             elif hall == "ortega":
-                frac = 0.92
+                frac = 0.5
             else:
                 frac = 0.5
 

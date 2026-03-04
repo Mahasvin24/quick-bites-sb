@@ -88,6 +88,14 @@ export default function Home() {
               Live feel for the dining commons at a glance.
             </p>
           </div>
+          <a
+            href="https://nutrition.info.dining.ucsb.edu/NetNutrition/1#"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center justify-center rounded-full bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+          >
+            Nutritional Information
+          </a>
         </header>
 
         <div className="mb-6 sm:mb-8">
