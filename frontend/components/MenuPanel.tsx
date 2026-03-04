@@ -151,9 +151,12 @@ export function MenuPanel({
               No menu items for this period.
             </p>
           ) : (
-            <div className="grid grid-cols-2 gap-x-4 gap-y-3">
+            <div className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
               {(() => {
-                const byStation = new Map<string, { name: string; items: string[] }>();
+                const byStation = new Map<
+                  string,
+                  { name: string; items: string[] }
+                >();
                 for (const it of currentMeal.items) {
                   const station = it.station ?? "General";
                   if (!byStation.has(station)) {
@@ -161,23 +164,42 @@ export function MenuPanel({
                   }
                   byStation.get(station)!.items.push(it.name);
                 }
-                return Array.from(byStation.values()).map((station) => (
-                  <div key={station.name} className="space-y-1">
-                    <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                      {station.name}
-                    </h3>
-                    <ul className="space-y-0.5">
-                      {station.items.map((itemName) => (
-                        <li
-                          key={`${station.name}-${itemName}`}
-                          className="flex items-center rounded-lg px-2 py-1.5 text-sm text-foreground/90 transition-colors hover:bg-muted/80"
-                        >
-                          <span>{itemName}</span>
-                        </li>
-                      ))}
-                    </ul>
+
+                const stations = Array.from(byStation.values());
+                const midpoint = Math.ceil(stations.length / 2);
+                const leftColumn = stations.slice(0, midpoint);
+                const rightColumn = stations.slice(midpoint);
+
+                const renderColumn = (
+                  columnStations: { name: string; items: string[] }[]
+                ) => (
+                  <div className="space-y-4">
+                    {columnStations.map((station) => (
+                      <div key={station.name} className="space-y-1">
+                        <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                          {station.name}
+                        </h3>
+                        <ul className="space-y-0.5">
+                          {station.items.map((itemName) => (
+                            <li
+                              key={`${station.name}-${itemName}`}
+                              className="flex items-center rounded-lg px-2 py-1.5 text-sm text-foreground/90 transition-colors hover:bg-muted/80"
+                            >
+                              <span>{itemName}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ))}
                   </div>
-                ));
+                );
+
+                return (
+                  <>
+                    {renderColumn(leftColumn)}
+                    {rightColumn.length > 0 && renderColumn(rightColumn)}
+                  </>
+                );
               })()}
             </div>
           )}
